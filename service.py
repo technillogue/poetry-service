@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 from pathlib import Path
 from aiohttp import web
+import yaml
 
 
 def sha256(_data: str) -> str:
@@ -23,9 +24,8 @@ def canonicalize(requirements: str):
 app = web.Application()
 base = Path("/tmp/envs")
 
-
-async def route(req: web.Request) -> web.FileResponse:
-    requirements = canonicalize(await req.text())
+async def solve_deps(deps: str) -> Path:
+    requirements = canonicalize(deps)
     digest = sha256(requirements)
     poetry_path = base / digest
     lock_path = poetry_path / "poetry.lock"
@@ -37,9 +37,20 @@ async def route(req: web.Request) -> web.FileResponse:
         "poetry", "add", *requirements.split(), cwd=poetry_path
     )
     await proc.wait()
+    return lock_path
+
+async def requirements(req: web.Request) -> web.FileResponse:
+    lock_path = solve_deps(await req.text())
+    return web.FileResponse(lock_path)
+
+async def yaml(req: web.Request) -> web.FileResponse:
+    cog = yaml.load(await req.text(), Loader=yaml.CLoader)
+    deps = "\n".join(cog["build"]["python_packages"])
+    lock_path = solve_deps(deps)
     return web.FileResponse(lock_path)
 
 
-app.add_routes([web.post("/poetry", route)])
+
+app.add_routes([web.post("/requirements", route)])
 if __name__ == "__main__":
     web.run_app(app, port=8080)
